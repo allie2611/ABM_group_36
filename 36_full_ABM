@@ -1,0 +1,726 @@
+import random
+import numpy as np
+import math
+from shapely import contains_xy
+from shapely import prepare
+import geopandas as gpd
+from shapely.geometry import Point
+
+
+def set_initial_values(input_data, parameter, seed):
+    """
+    Function to set the values based on the distribution shown in the input data for each parameter.
+    The input data contains which percentage of households has a certain initial value.
+
+    Parameters
+    ----------
+    input_data: the dataframe containing the distribution of paramters
+    parameter: parameter name that is to be set
+    seed: agent's seed
+
+    Returns
+    -------
+    parameter_set: the value that is set for a certain agent for the specified parameter
+    """
+    parameter_set = 0
+    parameter_data = input_data.loc[
+        (input_data.parameter == parameter)]  # get the distribution of values for the specified parameter
+    parameter_data = parameter_data.reset_index()
+    random.seed(seed)
+    random_parameter = random.randint(0, 100)
+    for i in range(len(parameter_data)):
+        if i == 0:
+            if random_parameter < parameter_data['value_for_input'][i]:
+                parameter_set = parameter_data['value'][i]
+                break
+        else:
+            if (random_parameter >= parameter_data['value_for_input'][i - 1]) and (
+                    random_parameter <= parameter_data['value_for_input'][i]):
+                parameter_set = parameter_data['value'][i]
+                break
+            else:
+                continue
+    return parameter_set
+
+def get_flood_map_data(flood_map):
+    """
+    Getting the flood map characteristics.
+
+    Parameters
+    ----------
+    flood_map: flood map in tif format
+
+    Returns
+    -------
+    band, bound_l, bound_r, bound_t, bound_b: characteristics of the tif-file
+    """
+    band = flood_map.read(1)
+    bound_l = flood_map.bounds.left
+    bound_r = flood_map.bounds.right
+    bound_t = flood_map.bounds.top
+    bound_b = flood_map.bounds.bottom
+    return band, bound_l, bound_r, bound_t, bound_b
+
+
+shapefile_path = r'../input_data/model_domain/houston_model/newstuf selection 1/newstuf selection 1.shp'
+floodplain_path = r'../input_data/floodplain/floodplain_area.shp'
+
+
+import matplotlib.pyplot as plt
+
+# New shapefile path with 88 polygons representing neighborhoods
+
+
+# Model area setup
+map_domain_gdf = gpd.GeoDataFrame.from_file(shapefile_path)
+map_domain_gdf = map_domain_gdf.to_crs(epsg=26915)
+map_domain_geoseries = map_domain_gdf['geometry']
+
+# Plot the individual polygons
+fig, ax = plt.subplots()
+map_domain_gdf.plot(ax=ax, edgecolor='black', linewidth=0.5)
+plt.title('Neighborhoods')
+plt.show()
+
+# Combine all polygons into one for the map domain
+map_domain_polygon = map_domain_geoseries.unary_union
+
+# Continue with the existing code
+map_minx, map_miny, map_maxx, map_maxy = map_domain_geoseries.total_bounds
+prepare(map_domain_polygon)
+
+# Floodplain setup
+floodplain_gdf = gpd.GeoDataFrame.from_file(floodplain_path)
+floodplain_gdf = floodplain_gdf.to_crs(epsg=26915)
+floodplain_geoseries = floodplain_gdf['geometry']
+floodplain_multipolygon = floodplain_geoseries[0]  # The geoseries contains only one multipolygon
+prepare(floodplain_multipolygon)
+
+import geopandas as gpd
+import random
+
+
+def generate_two_random_points_per_polygon(gdf):
+    """
+    Generate two random points within each polygon in a GeoDataFrame.
+
+    Parameters
+    ----------
+    gdf : geopandas.GeoDataFrame
+        GeoDataFrame containing the polygons.
+
+    Returns
+    -------
+    xs, ys: lists of x and y coordinates
+    """
+
+    """
+    for _, row in gdf.iterrows():
+        polygon = row['geometry']
+        minx, miny, maxx, maxy = polygon.bounds
+
+        for _ in range(2):  # Generate two points
+            while True:
+                x = random.uniform(minx, maxx)
+                y = random.uniform(miny, maxy)
+                if polygon.contains(Point(x, y)):
+                    return x, y  # Break the while loop once a valid point is found
+"""
+
+    points = []
+    for _, row in gdf.iterrows():
+        polygon = row['geometry']
+        minx, miny, maxx, maxy = polygon.bounds
+
+        for _ in range(2):  # Generate two points
+            while True:
+                x = random.uniform(minx, maxx)
+                y = random.uniform(miny, maxy)
+                point = Point(x, y)
+                if polygon.contains(point):
+                    points.append(point)
+                    break  # Break the while loop once a valid point is found
+    return points
+    """
+    points = []
+    for _, row in gdf.iterrows():
+        polygon = row['geometry']
+        minx, miny, maxx, maxy = polygon.bounds
+
+            while True:
+                x = random.uniform(minx, maxx)
+                y = random.uniform(miny, maxy)
+                point = Point(x, y)
+                if polygon.contains(point):
+                    points.append(point)
+                    break  # Break the while loop once a valid point is found
+    return points
+"""
+
+def generate_random_location_within_map_domain():
+    """
+    Generate random location coordinates within the map domain polygon.
+
+    Returns
+    -------
+    x, y: lists of location coordinates, longitude and latitude
+    """
+    while True:
+        # generate random location coordinates within square area of map domain
+        x = random.uniform(map_minx, map_maxx)
+        y = random.uniform(map_miny, map_maxy)
+        # check if the point is within the polygon, if so, return the coordinates
+        if contains_xy(map_domain_polygon, x, y):
+            return x, y
+
+
+def get_flood_depth(corresponding_map, location, band):
+    """
+    To get the flood depth of a specific location within the model domain.
+    Households are placed randomly on the map, so the distribution does not follow reality.
+
+    Parameters
+    ----------
+    corresponding_map: flood map used
+    location: household location (a Shapely Point) on the map
+    band: band from the flood map
+
+    Returns
+    -------
+    depth: flood depth at the given location
+    """
+    row, col = corresponding_map.index(location.x, location.y)
+    depth = band[row - 1, col - 1]
+    return depth
+
+
+def get_position_flood(bound_l, bound_r, bound_t, bound_b, img, seed):
+    """
+    To generater the position on flood map for a household.
+    Households are placed randomly on the map, so the distribution does not follow reality.
+
+    Parameters
+    ----------
+    bound_l, bound_r, bound_t, bound_b, img: characteristics of the flood map data (.tif file)
+    seed: seed to generate the location on the map
+
+    Returns
+    -------
+    x, y: location on the map
+    row, col: location within the tif-file
+    """
+    random.seed(seed)
+    x = random.randint(round(bound_l, 0), round(bound_r, 0))
+    y = random.randint(round(bound_b, 0), round(bound_t, 0))
+    row, col = img.index(x, y)
+    return x, y, row, col
+
+
+def calculate_basic_flood_damage(flood_depth):
+    """
+    To get flood damage based on flood depth of household
+    from de Moer, Huizinga (2017) with logarithmic regression over it.
+    If flood depth > 6m, damage = 1.
+
+    Parameters
+    ----------
+    flood_depth : flood depth as given by location within model domain
+
+    Returns
+    -------
+    flood_damage : damage factor between 0 and 1
+    """
+    if flood_depth >= 6:
+        flood_damage = 1
+    elif flood_depth < 0.025:
+        flood_damage = 0
+    else:
+        # see flood_damage.xlsx for function generation
+        flood_damage = 0.1746 * math.log(flood_depth) + 0.6483
+    return flood_damage
+
+
+
+
+
+
+
+
+
+
+
+import random
+from mesa import Agent
+from shapely.geometry import Point
+from shapely import contains_xy
+import geopandas as gdf
+
+# Import functions from functions.py
+
+# Define the Households agent class
+class Households(Agent):
+    def _init_(self, unique_id, model, location,):
+        super()._init_(unique_id, model)
+        self.location = location
+        self.is_adapted = False  # Initial adaptation status set to False
+        self.has_insurance = False
+        # Check whether the location is within floodplain
+        self.in_floodplain = False
+        if contains_xy(geom=floodplain_multipolygon, x=self.location.x, y=self.location.y):
+            self.in_floodplain = True
+
+        # Get the estimated flood depth at those coordinates.
+        # the estimated flood depth is calculated based on the flood map (i.e., past data) so this is not the actual flood depth
+        # Flood depth can be negative if the location is at a high elevation
+        self.flood_depth_estimated = get_flood_depth(corresponding_map=model.flood_map, location=self.location, band=model.band_flood_img)
+        # handle negative values of flood depth
+        if self.flood_depth_estimated < 0:
+            self.flood_depth_estimated = 0
+
+        # calculate the estimated flood damage given the estimated flood depth. Flood damage is a factor between 0 and 1
+        self.flood_damage_estimated = calculate_basic_flood_damage(flood_depth=self.flood_depth_estimated)
+
+        # Add an attribute for the actual flood depth. This is set to zero at the beginning of the simulation since there is not flood yet
+        # and will update its value when there is a shock (i.e., actual flood). Shock happens at some point during the simulation
+        self.flood_depth_actual = 0
+
+        # calculate the actual flood damage given the actual flood depth. Flood damage is a factor between 0 and 1
+        self.flood_damage_actual = calculate_basic_flood_damage(flood_depth=self.flood_depth_actual)
+        self.income = self.assign_income_category()
+    def assign_income_category(self):
+        random_val = random.random()
+        if random_val < 0.2568:
+           return 'low(<35.000)'
+        elif random_val < 0.7607:
+          return 'medium(35.000-124.999)'
+        else:
+          return 'high(>=125.000)'
+            # getting flood map values
+            # Get a random location on the map
+
+    def purchase_insurance(self, insurance_cost):
+        # Probability logic based on income and insurance cost
+        insurance_cost = self.model.insurance_agent.calculate_insurance_cost(self)
+
+        if self.income == 'low':
+            prob_purchase = 0.2 if insurance_cost <= 150 else 0.1
+        elif self.income == 'medium':
+            prob_purchase = 0.4 if insurance_cost <= 150 else 0.2
+        else:  # 'high'
+            prob_purchase = 0.6 if insurance_cost <= 150 else 0.3
+
+        decision = random.random()<prob_purchase
+        if decision:
+            self.has_insurance = True
+
+        print(f"{self.unique_id},,incomeclass: {self.income}, Insurance cost: {insurance_cost } estimated flood damage {self.flood_damage_estimated}     Has bought insurance:  {decision}")
+
+    # Function to count friends who can be influencial.
+    def count_friends(self, radius):
+        """Count the number of neighbors within a given radius (number of edges away). This is social relation and not spatial"""
+        friends = self.model.grid.get_neighborhood(self.pos, include_center=False, radius=radius)
+        return len(friends)
+
+    def count_adapted_neighbors_same_income(self):
+        neighbors = self.model.grid.get_neighbors(self.pos, include_center=False)
+        adapted_neighbors_same_income = sum(1 for neighbor in neighbors if neighbor.is_adapted and neighbor.income == self.income)
+        return adapted_neighbors_same_income
+
+    def step(self):
+        # Base probability of adaptation based on estimated flood damage
+        adaptation_probability = 0.05 if self.flood_damage_estimated > 0.15 else 0
+        """if not self.has_insurance:
+            insurance_cost = self.model.insurance_agent.calculate_insurance_cost(self)
+            self.purchase_insurance(insurance_cost)"""
+        # Adjust probability based on income category
+        if self.income == "high":
+            adaptation_probability += 0.1  # Additional probability for high income
+        elif self.income == "medium":
+            adaptation_probability += 0.05  # Additional probability for medium income
+        # Note: You can adjust these values as needed.
+        adapted_neighbors_same_income = self.count_adapted_neighbors_same_income()
+        if adapted_neighbors_same_income > 0:
+            adaptation_probability += 0.05
+        if self.has_insurance == "insured":
+            adaptation_probability -= 0.025
+
+        # Make adaptation decision based on the total probability
+        if random.random() < adaptation_probability:
+            self.is_adapted = True
+
+
+
+class InsuranceAgent(Agent):
+    def _init_(self, unique_id, model):
+        super()._init_(unique_id, model)
+
+    def calculate_insurance_cost(self, household):
+        # Example: Set base cost
+        base_cost = 100
+
+        # Adjust cost based on estimated flood damage
+        # Assuming higher damage estimates lead to higher costs
+        if household.flood_damage_estimated <= 0.3:
+            cost_multiplier = 1
+        else: #household.flood_damage_estimated > 0.3:
+            cost_multiplier = 2
+
+
+        # Final insurance cost is base cost adjusted by the multiplier
+        final_cost = base_cost * cost_multiplier
+
+        return final_cost
+    def _init_(self, unique_id, model):
+        super()._init_(unique_id, model)
+
+
+
+
+
+
+import networkx as nx
+from mesa import Model, Agent
+from mesa.time import RandomActivation
+from mesa.space import NetworkGrid
+from mesa.datacollection import DataCollector
+import geopandas as gpd
+import rasterio as rs
+import matplotlib.pyplot as plt
+import random
+
+
+
+# Define the AdaptationModel class
+class AdaptationModel(Model):
+    """
+    The main model running the simulation. It sets up the network of household agents,
+    simulates their behavior, and collects data. The network type can be adjusted based on study requirements.
+    """
+
+    def _init_(self,
+                 seed=None,
+                 number_of_households=262,  # number of household agents
+                 # Simplified argument for choosing flood map. Can currently be "harvey", "100yr", or "500yr".
+                 flood_map_choice='harvey',
+                 # ### network related parameters ###
+                 # The social network structure that is used.
+                 # Can currently be "erdos_renyi", "barabasi_albert", "watts_strogatz", or "no_network"
+                 network='spacial_watts_strogatz',
+                 # likeliness of edge being created between two nodes
+                 probability_of_network_connection=0.4,
+                 # number of edges for BA network
+                 number_of_edges=3,
+                 # number of nearest neighbours for WS social network
+                 number_of_nearest_neighbours=5,
+                 # size of the steps
+                 step_size = 20,
+                 ):
+
+        super()._init_(seed=seed)
+        neighborhood_points = generate_two_random_points_per_polygon(map_domain_gdf)
+        positions = {i: point.coords[0] for i, point in enumerate(neighborhood_points)}
+
+        # defining the variables and setting the values
+        self.number_of_households = number_of_households  # Total number of household agents
+        self.seed = seed
+
+        # network
+        self.network = network  # Type of network to be created
+        self.probability_of_network_connection = probability_of_network_connection
+        self.number_of_edges = number_of_edges
+        self.number_of_nearest_neighbours = number_of_nearest_neighbours
+        self.step_size = step_size
+
+        # generating the graph according to the network used and the network parameters specified
+        self.G = self.initialize_network(positions)
+        # create grid out of network graph
+        self.grid = NetworkGrid(self.G)
+
+        # Initialize maps
+        self.initialize_maps(flood_map_choice)
+
+        # set schedule for agents
+        self.schedule = RandomActivation(self)  # Schedule for activating agents
+        self.insurance_agent = InsuranceAgent("insurance_agent", self)
+        self.schedule.add(self.insurance_agent)
+        self.adapted_ratios = []
+        self.adapted_ratios_low = []
+        self.adapted_ratios_medium = []
+        self.adapted_ratios_high = []
+
+        # create households through initiating a household on each node of the network graph
+        for i, (point, node) in enumerate(zip(neighborhood_points, self.G.nodes)):
+            unique_id = f"household_{i}"
+            household = Households(unique_id=unique_id, model=self, location=point)
+            self.schedule.add(household)
+            self.grid.place_agent(agent=household, node_id=node)
+
+        # You might want to create other agents here, e.g. insurance agents.
+
+        # Data collection setup to collect data
+        model_metrics = {
+            "total_adapted_households": self.total_adapted_households,
+            # ... other reporters ...
+        }
+
+        agent_metrics = {
+            "FloodDepthEstimated": "flood_depth_estimated",
+            "FloodDamageEstimated": "flood_damage_estimated",
+            "FloodDepthActual": "flood_depth_actual",
+            "FloodDamageActual": "flood_damage_actual",
+            "IsAdapted": "is_adapted",
+            "FriendsCount": lambda a: a.count_friends(radius=1) if isinstance(Agent, Households) else 0,
+            "location": "location",
+            # ... other reporters ...
+        }
+        # set up the data collector
+        self.datacollector = DataCollector(model_reporters=model_metrics, agent_reporters=agent_metrics)
+
+    def create_spatial_watts_strogatz(self, positions, k, p):
+        # Create a new Graph object
+        G = nx.Graph()
+
+        # Add nodes to the graph with their positions
+        for node_id, pos in positions.items():
+            G.add_node(node_id, pos=pos)
+
+        # Add edges to the graph
+        # Implement the logic for adding edges according to the Watts-Strogatz model
+        # This typically involves creating a regular ring lattice and then rewiring edges with probability p
+        # You will need to adapt this to use the spatial positions in 'positions'
+
+        # Your code to populate the graph goes here
+
+        return G
+    def initialize_network(self,positions):
+        """
+        Initialize and return the social network graph based on the provided network type using pattern matching.
+        """
+        if self.network == 'erdos_renyi':
+            return nx.erdos_renyi_graph(n=self.number_of_households,
+                                        p=self.number_of_nearest_neighbours / self.number_of_households,
+                                        seed=self.seed)
+        elif self.network == 'barabasi_albert':
+            return nx.barabasi_albert_graph(n=self.number_of_households,
+                                            m=self.number_of_edges,
+                                            seed=self.seed)
+        elif self.network == 'watts_strogatz':
+            return nx.watts_strogatz_graph(n=self.number_of_households,
+                                           k=self.number_of_nearest_neighbours,
+                                           p=self.probability_of_network_connection,
+                                           seed=self.seed)
+        elif self.network == 'spacial_watts_strogatz':
+            return self.create_spatial_watts_strogatz(positions,
+                                                      k=self.number_of_nearest_neighbours,
+                                                      p=self.probability_of_network_connection,
+                                                      )
+        elif self.network == 'no_network':
+            G = nx.Graph()
+            G.add_nodes_from(range(self.number_of_households))
+            return G
+        else:
+            raise ValueError(f"Unknown network type: '{self.network}'. "
+                             f"Currently implemented network types are: "
+                             f"'erdos_renyi', 'barabasi_albert', 'watts_strogatz', and 'no_network'")
+
+    def initialize_maps(self, flood_map_choice):
+        """
+        Initialize and set up the flood map related data based on the provided flood map choice.
+        """
+        # Define paths to flood maps
+        flood_map_paths = {
+            'harvey': r'../input_data/floodmaps/Harvey_depth_meters.tif',
+            '100yr': r'../input_data/floodmaps/100yr_storm_depth_meters.tif',
+            '500yr': r'../input_data/floodmaps/500yr_storm_depth_meters.tif'  # Example path for 500yr flood map
+        }
+
+        # Throw a ValueError if the flood map choice is not in the dictionary
+        if flood_map_choice not in flood_map_paths.keys():
+            raise ValueError(f"Unknown flood map choice: '{flood_map_choice}'. "
+                             f"Currently implemented choices are: {list(flood_map_paths.keys())}")
+
+        # Choose the appropriate flood map based on the input choice
+        flood_map_path = flood_map_paths[flood_map_choice]
+
+        # Loading and setting up the flood map
+        self.flood_map = rs.open(flood_map_path)
+        self.band_flood_img, self.bound_left, self.bound_right, self.bound_top, self.bound_bottom = get_flood_map_data(
+            self.flood_map)
+
+    def total_adapted_households(self):
+        """Return the total number of households that have adapted."""
+        # BE CAREFUL THAT YOU MAY HAVE DIFFERENT AGENT TYPES SO YOU NEED TO FIRST CHECK IF THE AGENT IS ACTUALLY A HOUSEHOLD AGENT USING "ISINSTANCE"
+        adapted_count = sum([1 for agent in self.schedule.agents if isinstance(agent, Households) and agent.is_adapted])
+        return adapted_count
+
+    def plot_model_domain_with_agents(self):
+        fig, ax = plt.subplots()
+        # Plot the model domain
+        map_domain_gdf.plot(ax=ax, color='lightgrey', edgecolor='black', linewidth=0.5)
+        # Plot the floodplain
+        """floodplain_gdf.plot(ax=ax, color='lightblue', edgecolor='k', alpha=0.5)"""
+
+        # Collect agent locations and statuses
+        agent_coordinates = []  # List to store agent coordinates
+        for agent in self.schedule.agents:
+            if isinstance(agent, Households):
+                color = 'blue' if agent.is_adapted else 'red'
+                ax.scatter(agent.location.x, agent.location.y, color=color, s=10,
+                           label=color.capitalize() if not ax.collections else "")
+                insurance_status = 'insured' if agent.has_insurance else 'not insured'
+                income_class = agent.income
+                flood_depth = agent.flood_damage_estimated
+                """ax.annotate(str(agent.unique_id), (agent.location.x, agent.location.y), textcoords="offset points",
+                            xytext=(0, 1), ha='center', fontsize=9)"""
+                adaptation_status = 'adapted' if agent.is_adapted else 'not adapted'
+                # Append agent coordinates to the list
+                agent_coordinates.append((agent.unique_id, agent.location.x, agent.location.y, insurance_status, income_class, adaptation_status, flood_depth ))
+
+        # Print or log agent coordinates
+       # print("Agent Coordinates and Insurance Status:")
+       # for agent_id, x, y, insurance_status, income_class, adaptation_status in agent_coordinates:
+       #     print(f"Agent {agent_id}: ({x}, {y}), {insurance_status}, Income Class: {income_class}, {adaptation_status}")
+        print("Agent status")
+        for agent_id, _, _, insurance_status, income_class, adaptation_status, flood_depth in agent_coordinates:
+            agent_number = int(agent_id.split("_")[1])
+            if 1 <= agent_number <= 5:
+                print(
+                    f"household {agent_number} at Step {model.schedule.steps}: {insurance_status}, Income Class: {income_class}, Flood Damage Estimated: {flood_depth}, {adaptation_status}")
+
+        # Create legend with unique entries
+        handles, labels = ax.get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        ax.legend(by_label.values(), by_label.keys(), title="Red: not adapted, Blue: adapted")
+
+        # Customize plot with titles and labels
+        plt.title(f'Model Domain with Agents at Step {self.schedule.steps}')
+        plt.xlabel('Longitude')
+        plt.ylabel('Latitude')
+        plt.show()
+
+    def step(self):
+
+        if self.schedule.steps == 0:
+            for agent in self.schedule.agents:
+                if isinstance(agent, Households) and not agent.has_insurance:
+                    insurance_cost = self.insurance_agent.calculate_insurance_cost(agent)
+                    agent.purchase_insurance(insurance_cost)
+
+            # Collect data and advance the model by one step
+
+        if self.schedule.steps == 10:
+            for agent in self.schedule.agents:
+                if isinstance(agent, Households):
+                    # Calculate the actual flood depth as a random number between 0.5 and 1.2 times the estimated flood depth
+                    agent.flood_depth_actual = random.uniform(0.5, 1.2) * agent.flood_depth_estimated
+                    # calculate the actual flood damage given the actual flood depth
+                    agent.flood_damage_actual = calculate_basic_flood_damage(agent.flood_depth_actual)
+
+
+        # statistics printing
+        # Initialize ratios with default values to ensure they're always defined
+
+        if self.schedule.steps % self.step_size == 0:
+            insured_count = sum(agent.has_insurance for agent in self.schedule.agents if isinstance(agent, Households))
+            total_households = sum(isinstance(agent, Households) for agent in self.schedule.agents)
+            adapted_count = sum(agent.is_adapted for agent in self.schedule.agents if isinstance(agent, Households))
+
+            insured_ratio = insured_count / total_households if total_households > 0 else 0
+            adapted_ratio = adapted_count / total_households if total_households > 0 else 0
+            self.adapted_ratios.append(adapted_ratio)
+
+            low_income_adapted = sum(agent.is_adapted for agent in self.schedule.agents if isinstance(agent, Households) and agent.income == 'low(<35.000)')
+            low_income_not_adapted = sum(not agent.is_adapted for agent in self.schedule.agents if isinstance(agent, Households) and agent.income == 'low(<35.000)')
+
+            medium_income_adapted = sum(agent.is_adapted for agent in self.schedule.agents if isinstance(agent, Households) and agent.income == 'medium(35.000-124.999)')
+            medium_income_not_adapted = sum(not agent.is_adapted for agent in self.schedule.agents if isinstance(agent, Households) and agent.income == 'medium(35.000-124.999)')
+
+            high_income_adapted = sum(agent.is_adapted for agent in self.schedule.agents if isinstance(agent, Households) and agent.income == 'high(>=125.000)')
+            high_income_not_adapted = sum(not agent.is_adapted for agent in self.schedule.agents if isinstance(agent, Households) and agent.income == 'high(>=125.000)')
+
+            # Append the ratios, ensuring not to divide by zero
+            self.adapted_ratios_low.append(low_income_adapted / (low_income_adapted + low_income_not_adapted) if (low_income_adapted + low_income_not_adapted) > 0 else 0)
+            self.adapted_ratios_medium.append(medium_income_adapted / (medium_income_adapted + medium_income_not_adapted) if (medium_income_adapted + medium_income_not_adapted) > 0 else 0)
+            self.adapted_ratios_high.append(high_income_adapted / (high_income_adapted + high_income_not_adapted) if (high_income_adapted + high_income_not_adapted) > 0 else 0)
+
+
+            # Print statistics
+            #print(f"Step {self.schedule.steps}:")
+            #print(f"Insured/Not Insured Ratio: {insured_ratio:.2f}")
+            #print(f"Adapted/Not Adapted Ratio: {adapted_ratio:.2f}")
+
+        self.datacollector.collect(self)
+        self.schedule.step()
+
+
+import matplotlib.pyplot as plt
+import networkx as nx
+
+
+step_size=20
+# Initialize the Adaptation Model with 50 household agents.
+model = AdaptationModel(step_size=step_size) # flood_map_choice can be "harvey", "100yr", or "500yr"
+# Calculate positions of nodes for the network plot.
+# The spring_layout function positions nodes using a force-directed algorithm,
+# which helps visualize the structure of the social network.
+pos = nx.spring_layout(model.G)
+def total_insured_households(self):
+    insured_count = sum(1 for agent in self.schedule.agents if isinstance(agent, Households) and agent.has_insurance)
+    return insured_count
+# Define a function to plot agents on the network.
+# This function takes a matplotlib axes object and the model as inputs.
+def plot_network(ax, model):
+    # Clear the current axes
+    ax.clear()
+    # Determine the color of each node (agent) based on their adaptation status.
+    colors = ['blue' if agent.is_adapted else 'red' for agent in model.schedule.agents if isinstance(agent, Households)]
+    # Draw the network with node colors and labels.
+    nx.draw(model.G, pos, node_color=colors, with_labels=False, ax=ax)
+    # Set the title of the plot with the current step number.
+    ax.set_title(f"Social Network State at Step {model.schedule.steps}", fontsize=12)
+
+# Generate the initial plots at step 0.
+# Plot the spatial distribution of agents. This is a function written in the model.py
+model.plot_model_domain_with_agents()
+
+# Plot the initial state of the social network.
+fig, ax = plt.subplots(figsize=(7, 7))
+plot_network(ax, model)
+plt.show()
+
+
+hoevergaanwe = 81
+inwelkestappen = 20
+
+for step in range(hoevergaanwe):
+    model.step()
+
+    # Every 5 steps, generate and display plots for both the spatial distribution and network.
+    # Note the first step is step 0, so the plots will be generated at steps 4, 9, 14, and 19, which are the 5th, 10th, 15th, and 20th steps.
+    if (step + 1) % inwelkestappen == 0:
+        # Plot for the spatial map showing agent locations and adaptation status.
+        plt.figure(figsize=(10, 6))
+        model.plot_model_domain_with_agents()
+
+        # Plot for the social network showing connections and adaptation statuses.
+        fig, ax = plt.subplots(figsize=(7, 7))
+        plot_network(ax, model)
+        plt.show()
+
+adapted_ratios = model.adapted_ratios  # Retrieve the stored ratios
+stappen = np.arange(0,hoevergaanwe,inwelkestappen)
+#print(adapted_ratios)
+#print(stappen)
+plt.figure(figsize=(10, 6))
+plt.plot(stappen, adapted_ratios, label='Adapted/Not Adapted Ratio', linewidth=2)
+plt.plot(stappen, model.adapted_ratios_low, label='Low Income Adapted/Not Adapted Ratio', marker='o')
+plt.plot(stappen, model.adapted_ratios_medium, label='Medium Income Adapted/Not Adapted Ratio', marker='s')
+plt.plot(stappen, model.adapted_ratios_high, label='High Income Adapted/Not Adapted Ratio', marker='^')
+plt.title('Income Class Ratios Over Time')
+plt.title('Adapted/Not Adapted Ratio Over Time')
+plt.xlabel('Step')
+plt.xticks(stappen)
+plt.ylabel('Ratio')
+plt.legend()
+plt.grid(True)
+plt.show()
